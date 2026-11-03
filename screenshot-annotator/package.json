@@ -1,0 +1,22 @@
+{
+  "name": "screenshot-annotator",
+  "version": "0.7.4",
+  "private": true,
+  "type": "module",
+  "description": "Local macOS screenshot annotation and guarded paste-back for Codex",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "configure": "node scripts/configure.mjs",
+    "build:native": "bash scripts/build-native.sh",
+    "start": "node server/main.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "package:app": "bash scripts/package-app.sh"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LinQingmo-w/screenshotForCodex.git"
+  }
+}

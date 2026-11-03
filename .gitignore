@@ -1,0 +1,14 @@
+.DS_Store
+**/.build/
+**/mcp.json
+**/.mcp.json
+**/scripts/launch-server.sh
+**/node_modules/
+**/*.log
+**/scripts/quick-start.sh
+
+# 本地内部进度与历史设计记录不公开发布。
+screenshot-annotator/docs/progress.md
+screenshot-annotator/docs/verification.md
+screenshot-annotator/docs/testing.md
+screenshot-annotator/docs/superpowers/
