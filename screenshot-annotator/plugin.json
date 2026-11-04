@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "screenshot-annotator",
-  "version": "0.7.4",
+  "version": "0.7.6",
   "description": "Capture, annotate and paste screenshots into the current Codex composer on macOS.",
   "extensions": {
     "com.openai": {

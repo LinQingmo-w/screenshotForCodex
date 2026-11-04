@@ -1,6 +1,6 @@
 {
   "name": "screenshot-annotator",
-  "version": "0.7.4",
+  "version": "0.7.6",
   "private": true,
   "type": "module",
   "description": "Local macOS screenshot annotation and guarded paste-back for Codex",

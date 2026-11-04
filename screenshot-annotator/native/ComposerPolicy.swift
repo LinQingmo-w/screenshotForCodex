@@ -51,8 +51,9 @@ struct ComposerNotFound: LocalizedError {
 
 /// 等待客户端控件树短暂恢复；只重试查找，成功后只回调一次。
 enum ComposerLookup {
-    /// 首次失败后间隔 0.5 秒再试三次；调度器可替换以测试等待过程，不阻塞主线程。
-    static func resolve<T>(lookup: @escaping () throws -> T,
+    /// 先准备控件树一次，再每隔 0.5 秒最多重试六次，覆盖 Chromium 两秒防抖；调度器可用于无桌面测试。
+    static func resolve<T>(prepare: () -> Void = {},
+                           lookup: @escaping () throws -> T,
                            schedule: @escaping (@escaping () -> Void) -> Void = { work in
                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
                            },
@@ -67,6 +68,7 @@ enum ComposerLookup {
                 completion(.failure(error))
             }
         }
-        attempt(3)
+        prepare()
+        attempt(6)
     }
 }

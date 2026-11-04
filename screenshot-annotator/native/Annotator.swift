@@ -80,8 +80,8 @@ final class PasteTarget {
     let windowElement: AXUIElement
     let composer: AXUIElement
 
-    /// 点击对勾时读取已运行 Codex 当前窗口和输入框；不读取截图前的聊天状态。
-    init(allowFocused: Bool = false) throws {
+    /// 仅定位当前目标进程，供控件树准备与输入框查找共享相同的多实例规则。
+    private static func currentApplication() throws -> NSRunningApplication {
         let running = NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.codex")
         let frontmost = NSWorkspace.shared.frontmostApplication
         let application = running.first { $0.processIdentifier == frontmost?.processIdentifier }
@@ -89,6 +89,24 @@ final class PasteTarget {
         guard let application = application else {
             throw AnnotatorError(message: "请先打开目标 Codex 聊天；若运行了多个 Codex 实例，请先激活要附图的那个。")
         }
+        return application
+    }
+
+    /// 按需请求 Chromium 完整控件树；每轮查找前只调用一次，避免重复请求重置两秒防抖。
+    static func requestFullAccessibilityIfNeeded() {
+        guard AXIsProcessTrusted(), let application = try? currentApplication() else { return }
+        let app = AXUIElementCreateApplication(application.processIdentifier)
+        AXUIElementSetMessagingTimeout(app, 2)
+        guard (attribute(app, "AXEnhancedUserInterface") as? Bool) != true else { return }
+        // Chromium 先处理启用请求，再调用父类，因此可能返回 notImplemented 但实际已生效。
+        // 不以 setter 返回码中止；后续以真实输入框是否出现判定。上游有两秒防抖。
+        // https://chromium.googlesource.com/chromium/src/+/main/chrome/browser/chrome_browser_application_mac.mm
+        _ = AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+    }
+
+    /// 点击对勾时读取已运行 Codex 当前窗口和输入框；不读取截图前的聊天状态。
+    init(allowFocused: Bool = false) throws {
+        let application = try Self.currentApplication()
         guard AXIsProcessTrusted() else {
             let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
             _ = AXIsProcessTrustedWithOptions(options)
@@ -345,9 +363,15 @@ class Canvas: NSView {
         NSGraphicsContext.restoreGraphicsState()
     }
 
+    /// 子类可限定标注的可见区域（图像像素坐标）；原图仍完整显示，裁剪不会移动标注。
+    var annotationClipRect: CGRect? { nil }
+
     /// 将截图和标注渲染到当前图形上下文，预览与导出共用同一绘制路径。
     func paint(includePending: Bool) {
         image.draw(in: NSRect(origin: .zero, size: pixelSize), from: .zero, operation: .copy, fraction: 1)
+        NSGraphicsContext.saveGraphicsState()
+        if let clip = annotationClipRect { NSBezierPath(rect: clip).addClip() }
+        defer { NSGraphicsContext.restoreGraphicsState() }
         let visible = marks.enumerated().filter { $0.offset != suppressedMark }.map(\.element)
         let active = visible + (includePending && !pending.isEmpty ? [Mark(tool: tool, points: pending, color: ink, text: "", strokeWidth: strokeWidth)] : [])
         for mark in active { drawMark(mark) }
@@ -491,6 +515,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// 当前截图屏幕及底部工具栏，生命周期限于一次截图。
     var captureScreen: NSScreen?
     var floatingTools: FloatingTools?
+    /// 冻结画面对应的正常窗口边界，按从前到后排序，不包含本截图进程。
+    var captureWindowRects: [CGRect] = []
     /// 启动阶段耗时只写数值，不记录屏幕或聊天内容。
     var captureStartedAt = ProcessInfo.processInfo.systemUptime
     var captureBackend = "legacy-cli"
@@ -528,6 +554,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let screen = screens.first(where: { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }) ?? screens.first,
                   let index = screens.firstIndex(of: screen) else { throw AnnotatorError(message: "未找到可截图的屏幕。") }
             captureScreen = screen
+            captureWindowRects = windowRects(on: screen)
             session.update("capturing", "正在准备屏幕截图，随后拖动选择范围。")
             captureStartedAt = ProcessInfo.processInfo.systemUptime
             let primaryTop = NSScreen.screens.first?.frame.maxY ?? screen.frame.maxY
@@ -593,6 +620,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                    pixels: CGSize(width: image.width, height: image.height))
     }
 
+    /// 仅在截图前读取一次窗口几何信息；悬停时不用辅助功能、不扫描控件或读取窗口正文。
+    func windowRects(on screen: NSScreen) -> [CGRect] {
+        let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        let primaryTop = NSScreen.screens.first?.frame.maxY ?? screen.frame.maxY
+        return windows.compactMap { entry in
+            guard (entry[kCGWindowLayer as String] as? Int) == 0,
+                  (entry[kCGWindowOwnerPID as String] as? Int32) != ProcessInfo.processInfo.processIdentifier,
+                  (entry[kCGWindowAlpha as String] as? Double ?? 1) > 0,
+                  let values = entry[kCGWindowBounds as String] as? NSDictionary,
+                  let rect = CGRect(dictionaryRepresentation: values) else { return nil }
+            return SelectionGeometry.localWindowRect(rect, screen: screen.frame, primaryTop: primaryTop)
+        }
+    }
+
     /// 在当前屏幕上显示冻结画面与可拖动选区，使用底部浮动工具栏完成标注。
     func showEditor(image: NSImage, pixels: NSSize) {
         guard let screen = captureScreen ?? NSScreen.main else { return }
@@ -608,6 +649,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.delegate = self
         let canvas = SelectionCanvas(image: image, pixelSize: pixels)
         canvas.frame = CGRect(origin: .zero, size: screen.frame.size)
+        canvas.windowCandidates = captureWindowRects
+        canvas.updateWindowPreview(at: CGPoint(x: NSEvent.mouseLocation.x - screen.frame.minX,
+                                              y: NSEvent.mouseLocation.y - screen.frame.minY))
         self.canvas = canvas
         window.contentView = canvas
         let tools = FloatingTools()
@@ -639,7 +683,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(canvas)
         NSApp.activate(ignoringOtherApps: true)
-        session?.update("annotating", "拖动选择范围，边框可调整；回车完成，Esc 取消。")
+        session?.update("annotating", "单击采用预选窗口，拖动可自选范围；双击空白或回车完成，Esc 取消。")
         // 从快捷键到覆盖层显示的真实耗时留待用户试用后读取，不能用离线启动替代端到端数据。
         if let directory = session?.directory {
             let now = ProcessInfo.processInfo.systemUptime
@@ -692,7 +736,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             try? FileManager.default.removeItem(at: session.directory.appendingPathComponent("capture.png"))
             window?.orderOut(nil)
             // 每次只重新查找当前聊天；恢复后才调用一次粘贴，避免重试产生重复附件。
-            ComposerLookup.resolve(lookup: {
+            ComposerLookup.resolve(prepare: PasteTarget.requestFullAccessibilityIfNeeded, lookup: {
                 try PasteTarget(allowFocused: CommandLine.arguments.contains("--focused-composer"))
             }) { result in
                 switch result {

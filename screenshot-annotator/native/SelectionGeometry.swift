@@ -9,6 +9,14 @@ enum SelectionGeometry {
         return CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(a.x - b.x), height: abs(a.y - b.y))
     }
 
+    /// 将 Window Server 的左上原点窗口边界映射到当前屏幕局部坐标，跨屏部分裁到屏幕内。
+    static func localWindowRect(_ rect: CGRect, screen: CGRect, primaryTop: CGFloat) -> CGRect? {
+        let local = CGRect(x: rect.minX - screen.minX, y: primaryTop - rect.maxY - screen.minY,
+                           width: rect.width, height: rect.height)
+            .intersection(CGRect(origin: .zero, size: screen.size))
+        return !local.isNull && local.width >= 8 && local.height >= 8 ? local : nil
+    }
+
     /// 移动时保持选区大小，禁止越过屏幕边缘。
     static func moved(_ rect: CGRect, by delta: CGPoint, in bounds: CGRect) -> CGRect {
         CGRect(x: min(bounds.maxX - rect.width, max(bounds.minX, rect.minX + delta.x)),

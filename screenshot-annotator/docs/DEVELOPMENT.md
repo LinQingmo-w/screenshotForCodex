@@ -75,9 +75,9 @@ bash scripts/package-app.sh
 mkdir -p .build/release
 ditto -c -k --sequesterRsrc --keepParent \
   .build/screenshotForCodex.app \
-  .build/release/screenshotForCodex-0.7.4-macOS-arm64.zip
+  .build/release/screenshotForCodex-0.7.6-macOS-arm64.zip
 cd .build/release
-shasum -a 256 screenshotForCodex-0.7.4-macOS-arm64.zip > SHA256SUMS.txt
+shasum -a 256 screenshotForCodex-0.7.6-macOS-arm64.zip > SHA256SUMS.txt
 ```
 
 将 App ZIP 和校验文件作为对应版本的 Release 资产，源码通过 GitHub 自动生成的源码归档提供。版本号变更时同步更新插件清单、package.json、两个原生 Info.plist、README 和发布文件名。

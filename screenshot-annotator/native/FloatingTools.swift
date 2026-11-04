@@ -5,10 +5,10 @@ final class FloatingTools: NSView {
     /// 主工具条和下方颜色条，均使用系统材质并圆角显示。
     private let bar = NSVisualEffectView()
     private let palette = NSVisualEffectView()
-    /// 选择范围时为 nil；标注工具与现有 Tool 的 rawValue 一致。
+    /// 未选标注工具时为 nil；标注工具与现有 Tool 的 rawValue 一致。
     private var selectedTool: Int?
     /// 显示顺序与模型 rawValue 解耦，重新排列图标不会选错工具。
-    private let displayedTools: [Tool?] = [nil, .rectangle, .ellipse, .line, .arrow, .pen, .mosaic, .text]
+    private let displayedTools: [Tool] = [.rectangle, .ellipse, .line, .arrow, .pen, .mosaic, .text]
     private var colorIndex = 0
     /// 独立记住图形粗细和文字字号，两个工具组之间切换不互相覆盖。
     private var widthIndex = 1
@@ -43,8 +43,8 @@ final class FloatingTools: NSView {
             view.layer?.masksToBounds = true
             addSubview(view)
         }
-        let labels = ["调整范围", "矩形", "圆形", "直线", "箭头", "画笔", "马赛克画笔", "文字", "撤销", "取消", "完成并附图（回车）"]
-        let symbols = ["crop", "square", "circle", "line.diagonal", "arrow.up.right", "pencil", "rectangle.pattern.checkered", "textformat", "arrow.uturn.backward", "xmark", "checkmark"]
+        let labels = ["矩形", "圆形", "直线", "箭头", "画笔", "马赛克画笔", "文字", "撤销", "取消", "完成并附图（回车）"]
+        let symbols = ["square", "circle", "line.diagonal", "arrow.up.right", "pencil", "rectangle.pattern.checkered", "textformat", "arrow.uturn.backward", "xmark", "checkmark"]
         for index in labels.indices {
             let button = NSButton(frame: CGRect(x: 10 + index * 44, y: 6, width: 40, height: 40))
             button.isBordered = false
@@ -60,8 +60,8 @@ final class FloatingTools: NSView {
             button.target = self
             button.action = #selector(pressed(_:))
             button.tag = index
-            if index == 9 { button.contentTintColor = .systemRed }
-            if index == 10 { button.contentTintColor = .systemGreen; confirmButton = button }
+            if index == 8 { button.contentTintColor = .systemRed }
+            if index == 9 { button.contentTintColor = .systemGreen; confirmButton = button }
             bar.addSubview(button)
             toolButtons.append(button)
         }
@@ -94,7 +94,7 @@ final class FloatingTools: NSView {
 
     /// 主工具条位置只由选区与屏幕决定；展开颜色条不能导致主栏从下方跳到上方。
     func position(below selection: CGRect, in bounds: CGRect) {
-        let width: CGFloat = 504
+        let width: CGFloat = 460
         let x = min(bounds.maxX - width - 8, max(bounds.minX + 8, selection.maxX - width))
         let below = selection.minY - 64
         let barY = below >= 8 ? below : (selection.maxY + 64 <= bounds.maxY ? selection.maxY + 12 : 8)
@@ -128,18 +128,19 @@ final class FloatingTools: NSView {
         return super.hitTest(point)
     }
 
-    /// 工具选择只影响后续标注；范围模式隐藏颜色条，颜色跨工具保留。
+    /// 点击工具进入标注，再点同一工具退出；未选工具时隐藏颜色条，颜色跨工具保留。
     @objc private func pressed(_ sender: NSButton) {
         switch sender.tag {
-        case 0...7:
-            let next = displayedTools[sender.tag]?.rawValue
+        case 0...6:
+            let value = displayedTools[sender.tag].rawValue
+            let next = selectedTool == value ? nil : value
             chooseTool?(next)
             selectedTool = next
             updateSelection()
             relayout?()
-        case 8: undo?()
-        case 9: cancel?()
-        case 10: confirm?()
+        case 7: undo?()
+        case 8: cancel?()
+        case 9: confirm?()
         default: break
         }
     }
@@ -186,8 +187,8 @@ final class FloatingTools: NSView {
     /// 选中工具用绿色，选中色块用双层深色边框区分，包括白色色块。
     private func updateSelection() {
         updateSizeControl()
-        for (index, button) in toolButtons.enumerated() where index <= 7 {
-            let selected = displayedTools[index]?.rawValue == selectedTool
+        for (index, button) in toolButtons.enumerated() where index < displayedTools.count {
+            let selected = displayedTools[index].rawValue == selectedTool
             button.contentTintColor = selected ? .systemGreen : .darkGray
             button.wantsLayer = true
             button.layer?.cornerRadius = 6

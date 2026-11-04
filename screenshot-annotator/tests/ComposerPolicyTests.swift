@@ -22,7 +22,8 @@ import ImageIO
         var pending: [() -> Void] = []
         var lookups = 0
         var completions = 0
-        ComposerLookup.resolve(lookup: { () throws -> Int in
+        var preparations = 0
+        ComposerLookup.resolve(prepare: { preparations += 1 }, lookup: { () throws -> Int in
             lookups += 1
             if lookups < 3 { throw ComposerNotFound(message: "not ready") }
             return 42
@@ -34,9 +35,9 @@ import ImageIO
         pending.removeFirst()()
         assert(lookups == 2 && completions == 0 && pending.count == 1)
         pending.removeFirst()()
-        assert(lookups == 3 && completions == 1 && pending.isEmpty)
+        assert(lookups == 3 && completions == 1 && preparations == 1 && pending.isEmpty)
 
-        // 持续找不到时最多查找四次，最终只报一次最后的错误。
+        // 持续找不到时最多查找七次，最终只报一次最后的错误。
         lookups = 0
         completions = 0
         ComposerLookup.resolve(lookup: { () throws -> Int in
@@ -44,11 +45,25 @@ import ImageIO
             throw ComposerNotFound(message: "scan \(lookups)")
         }, schedule: { pending.append($0) }) { result in
             completions += 1
-            if case .failure(let error) = result { assert(error.localizedDescription == "scan 4") }
+            if case .failure(let error) = result { assert(error.localizedDescription == "scan 7") }
             else { assertionFailure("missing terminal failure") }
         }
-        for _ in 0..<3 { assert(pending.count == 1); pending.removeFirst()() }
-        assert(lookups == 4 && completions == 1 && pending.isEmpty)
+        for _ in 0..<6 { assert(pending.count == 1); pending.removeFirst()() }
+        assert(lookups == 7 && completions == 1 && pending.isEmpty)
+
+        lookups = 0
+        completions = 0
+        preparations = 0
+        ComposerLookup.resolve(prepare: { preparations += 1 }, lookup: { () throws -> Int in
+            lookups += 1
+            if lookups < 6 { throw ComposerNotFound(message: "debouncing") }
+            return 9
+        }, schedule: { pending.append($0) }) { result in
+            completions += 1
+            assert(try! result.get() == 9)
+        }
+        for _ in 0..<5 { pending.removeFirst()() }
+        assert(lookups == 6 && preparations == 1 && completions == 1 && pending.isEmpty)
 
         // 权限等非查找错误不重试；首轮成功同样不能排队再次执行。
         lookups = 0

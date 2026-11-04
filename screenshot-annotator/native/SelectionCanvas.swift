@@ -24,7 +24,10 @@ final class SelectionWindow: NSWindow {
 final class SelectionCanvas: Canvas, NSTextFieldDelegate {
     /// 当前裁剪范围为逻辑点；nil 表示等待用户拖出第一个选区。
     var selection: CGRect?
-    /// 范围模式允许移动选区，标注模式允许在选区内画图；边框手柄始终可用。
+    /// 冻结时的窗口边界按前后层叠排列，仅在尚未确认范围时用于鼠标预选。
+    var windowCandidates: [CGRect] = []
+    private(set) var previewSelection: CGRect?
+    /// 未选工具且无标注时可移动选区；有标注后仅允许调整边界，标注坐标保持不变。
     var annotationEnabled = false
     /// 布局、完成、取消与撤销由宿主处理，闭包不读取或操作聊天界面。
     var selectionChanged: (() -> Void)?
@@ -33,7 +36,7 @@ final class SelectionCanvas: Canvas, NSTextFieldDelegate {
     var undo: (() -> Void)?
     /// 每次拖动保留起点与原选区，避免累计鼠标位移造成漂移。
     private enum Drag {
-        case none, selecting(CGPoint), moving(CGRect, CGPoint), resizing(CGRect, Int, CGPoint), marking([Mark])
+        case none, previewing(CGRect, CGPoint), selecting(CGPoint), moving(CGRect, CGPoint), resizing(CGRect, Int, CGPoint), marking([Mark])
         case movingMark(Int, Mark, CGPoint, [Mark]), resizingMark(Int, Mark, CGRect, Int, CGPoint, [Mark])
     }
     private var drag = Drag.none
@@ -42,6 +45,8 @@ final class SelectionCanvas: Canvas, NSTextFieldDelegate {
     private var hoveredMark: Int?
     private var history: [[Mark]] = []
     private var tracking: NSTrackingArea?
+    /// 马赛克单击点涂若成为双击的第一下，第二下先撤掉这个临时点再按原内容判断。
+    private var lastDabID: UUID?
     /// 使用系统原生行内编辑框，中文输入法的预编辑文字和候选窗口由 AppKit 管理。
     private(set) var textEditor: NSTextField?
     private var editingIndex: Int?
@@ -57,8 +62,9 @@ final class SelectionCanvas: Canvas, NSTextFieldDelegate {
         return CGRect(x: rect.minX / pixelScale, y: rect.minY / pixelScale, width: rect.width / pixelScale, height: rect.height / pixelScale)
     }
 
-    /// 从后往前命中最上层图形，避免大矩形内部挡住其他标注。
+    /// 仅在裁剪范围内从后往前命中最上层图形，避免大矩形内部挡住其他标注。
     private func markAt(_ point: CGPoint) -> Int? {
+        guard selection?.contains(point) == true else { return nil }
         let pixel = CGPoint(x: point.x * pixelScale, y: point.y * pixelScale)
         return marks.indices.reversed().first { MarkGeometry.contains(pixel, mark: marks[$0], tolerance: 6 * pixelScale, fontSize: 18 * pixelScale) }
     }
@@ -232,6 +238,19 @@ final class SelectionCanvas: Canvas, NSTextFieldDelegate {
         field.frame.size.width = min(width, bounds.maxX - field.frame.minX - 4)
     }
 
+    /// 预选只显示边框，不开启工具栏；按窗口快照的前后顺序选择鼠标所在最上层窗口。
+    func updateWindowPreview(at point: CGPoint) {
+        guard selection == nil else { return }
+        previewSelection = windowCandidates.first { $0.contains(point) }
+        needsDisplay = true
+    }
+
+    /// 裁剪只限制标注的显示与导出，不修改标注模型的位置或大小。
+    override var annotationClipRect: CGRect? {
+        selection.map { CGRect(x: $0.minX * pixelScale, y: $0.minY * pixelScale,
+                               width: $0.width * pixelScale, height: $0.height * pixelScale) }
+    }
+
     /// 跟踪鼠标以高亮可编辑对象；所有命中都局限于本地标注模型。
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -244,6 +263,7 @@ final class SelectionCanvas: Canvas, NSTextFieldDelegate {
     /// 悬停显示对象轮廓，单击可选中，双击文字进入编辑。
     override func mouseMoved(with event: NSEvent) {
         guard textEditor == nil else { return }
+        if selection == nil { updateWindowPreview(at: convert(event.locationInWindow, from: nil)); return }
         hoveredMark = annotationEnabled && tool == .mosaic && selectedMark == nil ? nil : markAt(convert(event.locationInWindow, from: nil))
         if hoveredMark != nil { NSCursor.pointingHand.set() }
         needsDisplay = true
@@ -256,25 +276,22 @@ final class SelectionCanvas: Canvas, NSTextFieldDelegate {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         let mask = NSBezierPath(rect: bounds)
-        if let rect = selection { mask.appendRect(rect) }
+        if let rect = selection ?? previewSelection { mask.appendRect(rect) }
         mask.windingRule = .evenOdd
         NSColor.black.withAlphaComponent(0.48).setFill()
         mask.fill()
-        guard let rect = selection else {
-            let text = "拖动选择截图范围 · Esc 取消" as NSString
-            text.draw(at: CGPoint(x: max(20, bounds.midX - 145), y: bounds.midY),
-                      withAttributes: [.font: NSFont.systemFont(ofSize: 18, weight: .medium), .foregroundColor: NSColor.white])
-            return
-        }
+        guard let rect = selection ?? previewSelection else { return }
         NSColor.systemGreen.setStroke()
         let border = NSBezierPath(rect: rect)
         border.lineWidth = 2
         border.stroke()
         NSColor.systemGreen.setFill()
-        for point in SelectionGeometry.handles(rect) {
+        for point in selection == nil ? [] : SelectionGeometry.handles(rect) {
             NSBezierPath(roundedRect: CGRect(x: point.x - 3.5, y: point.y - 3.5, width: 7, height: 7), xRadius: 1, yRadius: 1).fill()
         }
         if let index = selectedMark ?? hoveredMark, marks.indices.contains(index), suppressedMark != index {
+            NSGraphicsContext.saveGraphicsState()
+            NSBezierPath(rect: rect).addClip()
             let box = markRect(index).insetBy(dx: -3, dy: -3)
             NSColor.gray.setStroke()
             let outline = NSBezierPath(rect: box)
@@ -287,24 +304,37 @@ final class SelectionCanvas: Canvas, NSTextFieldDelegate {
                     NSColor.white.setFill(); circle.fill(); NSColor.gray.setStroke(); circle.stroke()
                 }
             }
+            NSGraphicsContext.restoreGraphicsState()
         }
+
         let pixels = SelectionGeometry.pixels(rect, viewSize: bounds.size, pixelSize: pixelSize)
         let size = "\(Int(pixels.width)) × \(Int(pixels.height))" as NSString
         size.draw(at: CGPoint(x: rect.minX + 4, y: min(bounds.maxY - 25, rect.maxY + 6)),
                   withAttributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold), .foregroundColor: NSColor.white])
     }
 
-    /// 对象手柄优先，其次为裁剪边界、已有对象和新标注；双击文字原地编辑。
+    /// 单击采用窗口预选，拖动改为手动范围；双击空白完成，双击文字编辑，再处理边界和标注。
     override func mouseDown(with event: NSEvent) {
         commitTextEditing()
         window?.makeFirstResponder(self)
         let point = convert(event.locationInWindow, from: nil)
-        if event.clickCount >= 2, !(annotationEnabled && tool == .mosaic && selectedMark == nil), let index = markAt(point), marks[index].tool == .text {
+        if event.clickCount >= 2, let id = lastDabID, marks.last?.id == id {
+            marks.removeLast()
+            _ = history.popLast()
+        }
+        lastDabID = nil
+        if event.clickCount >= 2, let index = markAt(point), marks[index].tool == .text {
             beginText(at: self.point(event), editing: index)
             drag = .none
             return
         }
-        if let index = selectedMark, marks.indices.contains(index),
+        if event.clickCount >= 2, let rect = selection, rect.contains(point),
+           SelectionGeometry.hitHandle(point, rect: rect) == nil, markAt(point) == nil {
+            drag = .none
+            confirm?()
+            return
+        }
+        if let index = selectedMark, marks.indices.contains(index), selection?.contains(point) == true,
            let handle = SelectionGeometry.hitHandle(point, rect: markRect(index).insetBy(dx: -3, dy: -3), tolerance: 6) {
             drag = .resizingMark(index, marks[index], markRect(index), handle, point, marks)
             return
@@ -329,13 +359,17 @@ final class SelectionCanvas: Canvas, NSTextFieldDelegate {
                 return
             } else if rect.contains(point) {
                 selectMark(nil)
-                drag = .moving(rect, point)
-            } else {
+                drag = marks.isEmpty ? .moving(rect, point) : .none
+            } else if marks.isEmpty {
                 selectMark(nil)
                 drag = .selecting(point)
                 selection = CGRect(origin: point, size: .zero)
-            }
-        } else { drag = .selecting(point); selection = CGRect(origin: point, size: .zero) }
+            } else { drag = .none }
+        } else {
+            updateWindowPreview(at: point)
+            if let preview = previewSelection { drag = .previewing(preview, point) }
+            else { drag = .selecting(point); selection = CGRect(origin: point, size: .zero) }
+        }
         selectionChanged?()
         needsDisplay = true
     }
@@ -344,6 +378,11 @@ final class SelectionCanvas: Canvas, NSTextFieldDelegate {
     override func mouseDragged(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         switch drag {
+        case .previewing(_, let start):
+            guard hypot(point.x - start.x, point.y - start.y) >= 3 else { return }
+            previewSelection = nil
+            drag = .selecting(start)
+            selection = SelectionGeometry.rectangle(from: start, to: point, in: bounds)
         case .selecting(let start): selection = SelectionGeometry.rectangle(from: start, to: point, in: bounds)
         case .moving(let rect, let start): selection = SelectionGeometry.moved(rect, by: CGPoint(x: point.x - start.x, y: point.y - start.y), in: bounds)
         case .resizing(let rect, let handle, let start): selection = SelectionGeometry.resized(rect, handle: handle, by: CGPoint(x: point.x - start.x, y: point.y - start.y), in: bounds)
@@ -366,10 +405,17 @@ final class SelectionCanvas: Canvas, NSTextFieldDelegate {
     /// 一次拖动只记录一次撤销；新画出的标注立即可再次选中编辑。
     override func mouseUp(with event: NSEvent) {
         switch drag {
+        case .previewing(let rect, _):
+            selection = rect
+            previewSelection = nil
         case .marking(let before):
+            let wasDab = tool == .mosaic && pending.count == 1
             super.mouseUp(with: event)
             remember(before)
-            if marks.count > before.count { selectMark(tool == .mosaic ? nil : marks.count - 1) }
+            if marks.count > before.count {
+                selectMark(tool == .mosaic ? nil : marks.count - 1)
+                if wasDab { lastDabID = marks.last?.id }
+            }
         case .movingMark(_, _, _, let before), .resizingMark(_, _, _, _, _, let before): remember(before)
         default: break
         }
@@ -392,7 +438,7 @@ final class SelectionCanvas: Canvas, NSTextFieldDelegate {
     override func resetCursorRects() {
         addCursorRect(bounds, cursor: .crosshair)
         guard let rect = selection else { return }
-        if !annotationEnabled { addCursorRect(rect, cursor: .openHand) }
+        if !annotationEnabled && marks.isEmpty { addCursorRect(rect, cursor: .openHand) }
         for (index, point) in SelectionGeometry.handles(rect).enumerated() {
             addCursorRect(CGRect(x: point.x - 9, y: point.y - 9, width: 18, height: 18),
                           cursor: [1, 5].contains(index) ? .resizeUpDown : .resizeLeftRight)

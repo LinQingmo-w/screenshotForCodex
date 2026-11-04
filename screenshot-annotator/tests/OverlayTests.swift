@@ -38,20 +38,21 @@ import AppKit
         let colors = palette.subviews.compactMap { $0 as? NSButton }
         assert(colors.count == 6 && colors[0].layer?.borderWidth == 3)
         assert(colors.allSatisfy { $0.title.isEmpty })
+        assert(buttons.count == 10 && buttons.allSatisfy { $0.toolTip != "调整范围" })
         assert(buttons.allSatisfy { $0.title.isEmpty && $0.image != nil })
         var tool: Int? = nil
         var selectedColor: NSColor?
         toolbar.chooseTool = { tool = $0 }
         toolbar.chooseColor = { selectedColor = $0 }
         toolbar.relayout = { toolbar.position(below: CGRect(x: 900, y: 1, width: 500, height: 500), in: screen) }
-        buttons[1].performClick(nil)
+        buttons[0].performClick(nil)
         assert(tool == 0 && !palette.isHidden)
         assert(bar.frame.offsetBy(dx: toolbar.frame.minX, dy: toolbar.frame.minY).minY > 501 && screen.contains(toolbar.frame))
         colors[1].performClick(nil)
         assert(selectedColor == NSColor.systemBlue && colors[1].layer?.borderWidth == 3)
-        buttons[4].performClick(nil)
+        buttons[3].performClick(nil)
         assert(tool == 2 && colors[1].layer?.borderWidth == 3)
-        buttons[0].performClick(nil)
+        buttons[3].performClick(nil)
         assert(tool == nil && palette.isHidden)
 
         // 颜色条出现前后，主工具栏的屏幕位置必须一致。
@@ -59,7 +60,7 @@ import AppKit
         toolbar.relayout = { toolbar.position(below: nearBottom, in: screen) }
         toolbar.position(below: nearBottom, in: screen)
         let beforePalette = bar.frame.offsetBy(dx: toolbar.frame.minX, dy: toolbar.frame.minY)
-        buttons[1].performClick(nil)
+        buttons[0].performClick(nil)
         let afterPalette = bar.frame.offsetBy(dx: toolbar.frame.minX, dy: toolbar.frame.minY)
         assert(beforePalette == afterPalette)
         buttons[0].performClick(nil)
@@ -140,10 +141,10 @@ import AppKit
         editable.markSelectionChanged = { editingTools.reflectSelection($0) }
         editable.beginText(at: .zero, editing: textIndex)
         typeText("输入中直接切工具")
-        editButtons[1].performClick(nil)
+        editButtons[0].performClick(nil)
         assert(editable.textEditor == nil && editable.tool == .rectangle)
         assert(editable.marks[textIndex].text == "输入中直接切工具")
-        assert(editButtons[1].contentTintColor == NSColor.systemGreen)
+        assert(editButtons[0].contentTintColor == NSColor.systemGreen)
         editable.beginText(at: .zero, editing: textIndex)
         typeText("输入中直接改颜色")
         editColors[1].performClick(nil)
@@ -162,7 +163,7 @@ import AppKit
         editable.beginText(at: CGPoint(x: 20, y: 20))
         assert(editable.textEditor?.font?.pointSize == 24)
         editable.commitTextEditing()
-        editButtons[1].performClick(nil)
+        editButtons[0].performClick(nil)
         assert(sizeControl.segmentCount == 3 && sizeControl.selectedSegment == 1)
         sizeControl.selectedSegment = 2
         _ = sizeControl.sendAction(sizeControl.action, to: sizeControl.target)
@@ -298,10 +299,10 @@ import AppKit
         assert(changed > 300)
         assert(afterMosaic.colorAt(x: 50, y: 40)!.usingColorSpace(.deviceRGB)!.redComponent > 0.2)
         assert(afterMosaic.colorAt(x: 5, y: 5) == beforeMosaic.colorAt(x: 5, y: 5))
-        let mosaicButton = buttons[6]
+        let mosaicButton = buttons[5]
         mosaicButton.performClick(nil)
         assert(tool == Tool.mosaic.rawValue && colors.allSatisfy { $0.isHidden })
-        buttons[3].performClick(nil)
+        buttons[2].performClick(nil)
         assert(tool == Tool.line.rawValue && colors.allSatisfy { $0.isEnabled })
 
         // 马赛克仅覆盖圆头笔刷路径，不再填满拖动的外接矩形。
@@ -342,12 +343,96 @@ import AppKit
         let dab = NSBitmapImageRep(data: try brush.png())!
         assert(abs(dab.colorAt(x: 50, y: 40)!.usingColorSpace(.deviceRGB)!.redComponent - beforeMosaic.colorAt(x: 50, y: 40)!.usingColorSpace(.deviceRGB)!.redComponent) > 0.05)
         assert(dab.colorAt(x: 55, y: 35) == beforeMosaic.colorAt(x: 55, y: 35))
-        assert(buttons[3].toolTip == "直线" && buttons[4].toolTip == "箭头")
-        assert(buttons[5].toolTip == "画笔" && buttons[6].toolTip == "马赛克画笔" && buttons[7].toolTip == "文字")
-        buttons[6].performClick(nil)
-        assert(palette.frame.width == 180 && colors.allSatisfy { $0.isHidden })
+        assert(buttons[2].toolTip == "直线" && buttons[3].toolTip == "箭头")
+        assert(buttons[4].toolTip == "画笔" && buttons[5].toolTip == "马赛克画笔" && buttons[6].toolTip == "文字")
         buttons[5].performClick(nil)
+        assert(palette.frame.width == 180 && colors.allSatisfy { $0.isHidden })
+        buttons[4].performClick(nil)
         assert(colors.allSatisfy { !$0.isHidden })
+
+        // 窗口快照保持前后顺序；坐标映射覆盖主屏、左侧屏和跨屏裁剪。
+        assert(SelectionGeometry.localWindowRect(CGRect(x: 20, y: 10, width: 50, height: 30),
+            screen: CGRect(x: 0, y: 0, width: 100, height: 80), primaryTop: 80) == CGRect(x: 20, y: 40, width: 50, height: 30))
+        assert(SelectionGeometry.localWindowRect(CGRect(x: -50, y: 10, width: 70, height: 30),
+            screen: CGRect(x: -100, y: 0, width: 100, height: 80), primaryTop: 80) == CGRect(x: 50, y: 40, width: 50, height: 30))
+        assert(SelectionGeometry.localWindowRect(CGRect(x: 200, y: 10, width: 50, height: 30),
+            screen: CGRect(x: 0, y: 0, width: 100, height: 80), primaryTop: 80) == nil)
+        let snapping = SelectionCanvas(image: image, pixelSize: CGSize(width: 100, height: 80))
+        snapping.frame = CGRect(x: 0, y: 0, width: 100, height: 80)
+        let front = CGRect(x: 15, y: 15, width: 40, height: 40)
+        let back = CGRect(x: 5, y: 5, width: 90, height: 70)
+        snapping.windowCandidates = [front, back]
+        snapping.updateWindowPreview(at: CGPoint(x: 30, y: 30))
+        assert(snapping.previewSelection == front && snapping.selection == nil)
+        do { _ = try snapping.png(); assertionFailure("Hover preview must not silently become a confirmed selection") } catch {}
+        snapping.updateWindowPreview(at: CGPoint(x: 80, y: 60))
+        assert(snapping.previewSelection == back)
+        snapping.updateWindowPreview(at: CGPoint(x: 1, y: 1))
+        assert(snapping.previewSelection == nil)
+        snapping.mouseDown(with: mouse(.leftMouseDown, CGPoint(x: 30, y: 30)))
+        snapping.mouseUp(with: mouse(.leftMouseUp, CGPoint(x: 30, y: 30)))
+        assert(snapping.selection == front && snapping.previewSelection == nil)
+        snapping.selection = nil
+        snapping.mouseDown(with: mouse(.leftMouseDown, CGPoint(x: 30, y: 30)))
+        snapping.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: 60, y: 50)))
+        snapping.mouseUp(with: mouse(.leftMouseUp, CGPoint(x: 60, y: 50)))
+        assert(snapping.selection == CGRect(x: 30, y: 30, width: 30, height: 20))
+
+        // 无标注可整体移动；有标注后空白拖动及范围外拖动均不能改变裁剪位置。
+        let movable = SelectionCanvas(image: image, pixelSize: CGSize(width: 100, height: 80))
+        movable.frame = snapping.frame
+        let originalCrop = CGRect(x: 10, y: 10, width: 70, height: 55)
+        movable.selection = originalCrop
+        movable.mouseDown(with: mouse(.leftMouseDown, CGPoint(x: 40, y: 40)))
+        movable.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: 45, y: 43)))
+        movable.mouseUp(with: mouse(.leftMouseUp, CGPoint(x: 45, y: 43)))
+        assert(movable.selection == originalCrop.offsetBy(dx: 5, dy: 3))
+        movable.selection = originalCrop
+        let fixedMark = Mark(tool: .rectangle, points: [CGPoint(x: 20, y: 20), CGPoint(x: 75, y: 45)], color: .systemRed, text: "")
+        movable.marks = [fixedMark]
+        movable.mouseDown(with: mouse(.leftMouseDown, CGPoint(x: 40, y: 53)))
+        movable.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: 45, y: 55)))
+        movable.mouseUp(with: mouse(.leftMouseUp, CGPoint(x: 45, y: 55)))
+        assert(movable.selection == originalCrop && movable.marks == [fixedMark])
+        movable.mouseDown(with: mouse(.leftMouseDown, CGPoint(x: 95, y: 75)))
+        movable.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: 90, y: 70)))
+        movable.mouseUp(with: mouse(.leftMouseUp, CGPoint(x: 90, y: 70)))
+        assert(movable.selection == originalCrop)
+        movable.mouseDown(with: mouse(.leftMouseDown, CGPoint(x: 80, y: 35)))
+        movable.mouseDragged(with: mouse(.leftMouseDragged, CGPoint(x: 60, y: 35)))
+        movable.mouseUp(with: mouse(.leftMouseUp, CGPoint(x: 60, y: 35)))
+        assert(movable.selection == CGRect(x: 10, y: 10, width: 50, height: 55) && movable.marks == [fixedMark])
+        let croppedMark = NSBitmapImageRep(data: try movable.png())!
+        assert(croppedMark.pixelsWide == 50 && croppedMark.pixelsHigh == 55)
+        assert(croppedMark.colorAt(x: 35, y: 45)!.usingColorSpace(.deviceRGB)!.redComponent > 0.8)
+        let previewPixels = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 100, pixelsHigh: 80,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: previewPixels)
+        movable.paint(includePending: false)
+        NSGraphicsContext.restoreGraphicsState()
+        let outsideCrop = previewPixels.colorAt(x: 75, y: 50)!.usingColorSpace(.deviceRGB)!
+        assert(outsideCrop.blueComponent > 0.9 && outsideCrop.redComponent < 0.1)
+
+        // 空白双击只确认一次；双击文字仍打开编辑器，普通对象仍可选中编辑。
+        var doubleConfirmations = 0
+        movable.confirm = { doubleConfirmations += 1 }
+        movable.mouseDown(with: mouse(.leftMouseDown, CGPoint(x: 40, y: 53), clicks: 2))
+        movable.mouseUp(with: mouse(.leftMouseUp, CGPoint(x: 40, y: 53), clicks: 2))
+        assert(doubleConfirmations == 1)
+        movable.selection = movable.bounds
+        movable.marks = [Mark(tool: .text, points: [CGPoint(x: 25, y: 25)], color: .systemRed, text: "edit")]
+        movable.mouseDown(with: mouse(.leftMouseDown, CGPoint(x: 30, y: 30), clicks: 2))
+        assert(movable.textEditor != nil && doubleConfirmations == 1)
+        movable.commitTextEditing()
+        movable.marks = []
+        movable.chooseDrawingTool(Tool.mosaic.rawValue)
+        movable.mouseDown(with: mouse(.leftMouseDown, CGPoint(x: 45, y: 40)))
+        movable.mouseUp(with: mouse(.leftMouseUp, CGPoint(x: 45, y: 40)))
+        assert(movable.marks.count == 1)
+        movable.mouseDown(with: mouse(.leftMouseDown, CGPoint(x: 45, y: 40), clicks: 2))
+        assert(movable.marks.isEmpty && doubleConfirmations == 2)
 
         let shortcutWindow = SelectionWindow(contentRect: CGRect(x: 0, y: 0, width: 100, height: 100),
             styleMask: [.borderless], backing: .buffered, defer: false)
@@ -393,6 +478,6 @@ import AppKit
         previewTools.position(below: preview.selection!, in: preview.bounds)
         preview.cacheDisplay(in: preview.bounds, to: rendered)
         try rendered.representation(using: .png, properties: [:])!.write(to: renderPath.deletingLastPathComponent().appendingPathComponent("mosaic-brush-check.png"))
-        print("Synthetic overlay: tool order, brush-only mosaic pixels/dabs/overlap/resize/undo and existing editing passed")
+        print("Synthetic overlay: window hover/click/drag, locked annotated crop, preview/export clipping, double-click confirmation, toolbar and editing passed")
     }
 }
